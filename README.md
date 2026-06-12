@@ -6,7 +6,7 @@ new demonstrations seen from perturbed base viewpoints, while holding the manipu
 object's world trajectory fixed. It uses only the source RGB and proprioception — no
 per-setup calibration, scene scan, or URDF.
 
-It has two components (paper §3.2):
+It has two components:
 
 - a **trajectory generator** (`trajectory_augment.py`) that perturbs the source base
   trajectory to new viewpoints; and
@@ -14,7 +14,7 @@ It has two components (paper §3.2):
   reconstructing, with a fine-tuned
   [Depth Anything 3](https://github.com/ByteDance-Seed/Depth-Anything-3) backbone
   (**NoDA-FT**), a **per-frame 3D Gaussian Splat sequence** in a single global, metric
-  frame — each frame independent, a static per-frame model, **not** 4DGS. Its two
+  frame — each frame independent, a static per-frame model. Its two
   conceptual stages are split across three scripts: Stage 1 produces the per-frame
   splat — pose estimation (`stage1_pose.py`) then Gaussian initialization
   (`stage1_gaussians.py`) — and Stage 2 is photometric refinement (`stage2_refine.py`).
