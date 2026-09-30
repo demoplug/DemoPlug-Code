@@ -1,1 +1,1 @@
-"""Shared utilities for the NoDA pipeline (geometry / gaussians / io / se_math)."""
+"""Shared utilities for DemoPlug (geometry, Gaussians, I/O, and SE math)."""

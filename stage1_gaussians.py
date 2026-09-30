@@ -1,21 +1,18 @@
-"""Stage 1 — per-frame Gaussian Splat initialization (after pose estimation).
+"""DemoPlug Stage 1 — per-frame Gaussian Splat initialization.
 
-For each target frame we form a short sliding window (target + look-ahead) and run
-one NoDA-FT forward over the 3xW views, reading the per-pixel Gaussian primitives
-from the GS head. The window's primitives are lifted into Stage 1's global frame
-with a closed-form Umeyama alignment on the shared camera poses, then combined with
-the cross-frame opacity filter of Eq. 4 — target-frame primitives are kept
-unconditionally; look-ahead primitives are kept only where their opacity clears
-tau — into one Gaussian cloud per frame. NoDA-FT predicts low opacity on dynamic
-pixels, so anything that moves within the window is dropped from the look-ahead
-frames rather than smeared into the splat.
+For each target frame we form a short sliding window (target plus look-ahead) and
+run DA3 over the camera views, reading its per-pixel Gaussian primitives. The
+window's primitives are lifted into Stage 1's global frame with a closed-form
+Umeyama alignment on shared camera poses, then combined with a cross-frame opacity
+filter into one Gaussian cloud per frame. Low-confidence look-ahead primitives are
+removed to reduce dynamic-scene smearing.
 
 Output: ``per_frame_gaussians/frame_{:06d}.npz`` consumed by Stage 2.
 
 Usage:
     python stage1_gaussians.py \
         --frames-base /path/to/frames --stage1 /path/to/out/stage1 \
-        --finetuned-ckpt noda_ft.pt --frames 66-115 --out /path/to/out/gaussians
+        --finetuned-ckpt adapted_da3.pt --frames 66-115 --out /path/to/out/gaussians
 """
 import argparse
 import json
@@ -47,9 +44,8 @@ def load_model(model_id, finetuned_ckpt=None):
         model = model.cuda()
         model.device = torch.device("cuda")
     if finetuned_ckpt:
-        # NoDA-FT weights: LoRA adapters (rank 16) on the backbone attention Q/K/V
-        # projections (A.1.3). Attach the adapters before loading; the fine-tuning
-        # recipe is a one-time offline step out of scope for this inference release.
+        # Load matching tensors from a user-supplied adapted DA3 checkpoint. The
+        # checkpoint must have been exported for the selected DA3 model.
         ck = torch.load(finetuned_ckpt, map_location="cpu")
         saved = ck.get("trainable_state", ck)
         own = dict(model.model.named_parameters())
@@ -59,13 +55,13 @@ def load_model(model_id, finetuned_ckpt=None):
                 with torch.no_grad():
                     own[k].copy_(v.to(own[k].device, dtype=own[k].dtype))
                 n += 1
-        print(f"  loaded {n}/{len(saved)} NoDA-FT tensors from {finetuned_ckpt}")
+        print(f"  loaded {n}/{len(saved)} adapted DA3 tensors from {finetuned_ckpt}")
         model.model.eval()
     return model
 
 
 def forward_window(model, img_paths, res):
-    """One NoDA-FT forward with GS. Returns ext, depth, and per-view Gaussians."""
+    """One DA3 forward with the Gaussian head."""
     pred = model.inference(
         img_paths, process_res=res, ref_view_strategy="first",
         use_ray_pose=False, infer_gs=True,
@@ -136,7 +132,7 @@ def run_stage1_gaussians(frames_base, stage1_dir, frames, context, model_id, res
             dst.append(cen_global[c_i, np.array(frames_in_win) - frame_start])
         s, R, t, res_um = umeyama(np.vstack(src), np.vstack(dst))
 
-        # Assemble the per-frame splat with the Eq. 4 cross-frame filter:
+        # Assemble the per-frame splat with the cross-frame opacity rule cross-frame filter:
         #   G_t = U_{t' in window} { p : t' = target  or  opacity(p) > tau }.
         # Target-frame primitives are kept unconditionally; primitives lifted from
         # the look-ahead frames are admitted only where opacity clears tau, which
@@ -202,8 +198,8 @@ def parse_args():
     p.add_argument("--res", type=int, default=DEFAULT_RES)
     p.add_argument("--prune-depth-pct", type=float, default=0.9)
     p.add_argument("--opacity-tau", type=float, default=0.01,
-                   help="cross-frame primitive filter threshold tau (Eq. 4)")
-    p.add_argument("--finetuned-ckpt", default=None, help="NoDA-FT weights")
+                   help="cross-frame primitive filter threshold tau (cross-frame opacity rule)")
+    p.add_argument("--finetuned-ckpt", default=None, help="optional checkpoint with parameters matching the selected DA3 model")
     p.add_argument("--out", required=True)
     return p.parse_args()
 

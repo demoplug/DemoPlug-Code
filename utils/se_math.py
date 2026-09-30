@@ -5,7 +5,7 @@ lives in SE(3), stored as a 4x4 homogeneous matrix. The canonical embedding
 ``iota : SE(2) -> SE(3)`` lifts a base pose into 3D with zero height and a yaw-only
 rotation about ``+z``.
 
-Interpolation follows Appendix A.2.2: translation is linear and rotation is the
+Interpolation follows the trajectory interpolation specification: translation is linear and rotation is the
 shortest-arc Slerp. This split interpolant stands in for the exact screw-motion
 geodesic; the two agree to first order at the perturbation magnitudes used here.
 """
@@ -49,14 +49,14 @@ def iota(a):
 
 
 def interp_se2(a, b, lam):
-    """Split SE(2) interpolation (A.2.2): linear translation, shortest-arc yaw."""
+    """Split SE(2) interpolation (the trajectory interpolation specification): linear translation, shortest-arc yaw."""
     t = (1.0 - lam) * a[:2] + lam * b[:2]
     yaw = a[2] + lam * wrap_angle(b[2] - a[2])
     return se2(t[0], t[1], yaw)
 
 
 def interp_se3(A, B, lam):
-    """Split SE(3) interpolation (A.2.2): linear translation, quaternion Slerp."""
+    """Split SE(3) interpolation (the trajectory interpolation specification): linear translation, quaternion Slerp."""
     out = np.eye(4)
     out[:3, 3] = (1.0 - lam) * A[:3, 3] + lam * B[:3, 3]
     key = Rotation.from_matrix(np.stack([A[:3, :3], B[:3, :3]]))

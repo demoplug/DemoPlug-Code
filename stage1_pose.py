@@ -1,18 +1,17 @@
-"""Stage 1 — globally-aligned per-frame camera poses.
+"""DemoPlug Stage 1 — globally aligned per-frame camera poses.
 
-Runs the NoDA-FT backbone over overlapping sliding windows. NoDA-FT is
-depth-supervised, so each window's camera poses come out metric-scaled directly
-from RGB — no calibration, scene scan, or URDF. The windows are then
-stitched into one global frame with a rigid (6-DOF) Umeyama alignment on the camera
+Runs a DA3 backbone over overlapping sliding windows. When an adapted checkpoint
+is supplied, matching parameters are loaded before inference. The windows are then
+stitched into one global frame with a rigid (6-DOF) Umeyama alignment on camera
 poses shared between consecutive windows.
 
 Output: ``stage1_global_poses.npz`` with per-(camera, frame) world-to-camera
-extrinsics in a single global, metric coordinate frame.
+extrinsics in a single global coordinate frame.
 
 Usage:
     python stage1_pose.py \
         --frames-base /path/to/frames --cameras head,left_wrist,right_wrist \
-        --frame-start 66 --frame-end 116 --finetuned-ckpt noda_ft.pt \
+        --frame-start 66 --frame-end 116 --finetuned-ckpt adapted_da3.pt \
         --out /path/to/out/stage1
 """
 import argparse
@@ -43,9 +42,8 @@ def load_model(model_id, finetuned_ckpt=None):
         model = model.cuda()
         model.device = torch.device("cuda")
     if finetuned_ckpt:
-        # NoDA-FT weights: LoRA adapters (rank 16) on the backbone attention Q/K/V
-        # projections (A.1.3). Attach the adapters before loading; the fine-tuning
-        # recipe is a one-time offline step out of scope for this inference release.
+        # Load matching tensors from a user-supplied adapted DA3 checkpoint. The
+        # checkpoint must have been exported for the selected DA3 model.
         ck = torch.load(finetuned_ckpt, map_location="cpu")
         saved = ck.get("trainable_state", ck)
         own = dict(model.model.named_parameters())
@@ -55,7 +53,7 @@ def load_model(model_id, finetuned_ckpt=None):
                 with torch.no_grad():
                     own[k].copy_(v.to(own[k].device, dtype=own[k].dtype))
                 n += 1
-        print(f"  loaded {n}/{len(saved)} NoDA-FT tensors from {finetuned_ckpt}")
+        print(f"  loaded {n}/{len(saved)} adapted DA3 tensors from {finetuned_ckpt}")
         model.model.eval()
     print(f"  ready on {next(model.parameters()).device}")
     return model
@@ -84,7 +82,7 @@ def run_stage1(frames_base, cameras, frame_start, frame_end, win_size, overlap,
 
     model = load_model(model_id, finetuned_ckpt)
 
-    # --- per-window inference (metric poses straight from NoDA-FT) ---
+    # --- per-window inference ---
     per_window_ext, per_window_centers = [], []
     for w_idx, (w_s, w_e) in enumerate(windows):
         n_f = w_e - w_s
@@ -149,7 +147,7 @@ def parse_args():
     p.add_argument("--overlap", type=int, default=5)
     p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--finetuned-ckpt", default=None,
-                   help="NoDA-FT weights (metric poses depend on the depth-supervised fine-tune)")
+                   help="optional checkpoint with parameters matching the selected DA3 model")
     p.add_argument("--res", type=int, default=DEFAULT_RES)
     p.add_argument("--out", required=True)
     return p.parse_args()

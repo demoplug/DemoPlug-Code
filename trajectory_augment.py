@@ -1,19 +1,16 @@
-"""Trajectory generator — NoDA's base-perturbation demonstration augmentation.
+"""DemoPlug Cartesian trajectory augmentation utility.
 
 Given one source demonstration's proprioceptive trajectory — per-frame mobile-base
 pose ``T^b`` in SE(2), end-effector world pose ``T^g`` in SE(3), and gripper opening
 ``g`` — this emits ``N`` augmented trajectories that visit new base viewpoints while
-preserving the source gripper-object world trajectory through the contact phase
-(paper Eq. 2-3).
+preserving the source gripper-object world trajectory through the contact phase.
 
-The demonstration is split at the contact frame ``t*`` (first sustained gripper
-motion, A.2.1). In the approach phase the base is freely perturbed and the
-end-effector is re-routed to reach the *same* contact pose; in the contact phase the
+The demonstration is split at a phase boundary ``t*`` detected from a sustained
+end-effector translation burst. In the approach phase the base is perturbed and the
+end-effector is re-routed to reach the same contact pose; in the contact phase the
 end-effector world pose is held identical to the source and the base carries a small
-frozen perturbation, so the manipulated object sees an unchanged trajectory.
-Everything is computed from ``(T^b, T^g, T^{g/b})`` alone — no URDF or kinematic
-chain. The per-frame body-local perturbations are written alongside the augmented
-poses; the visual renderer (stage2*) consumes them to re-render the cameras (Eq. 6).
+frozen perturbation. The per-frame body-local perturbations are written alongside
+the augmented poses so a downstream robot or camera interface can apply them.
 
 Usage:
     python trajectory_augment.py \
@@ -31,7 +28,7 @@ from utils.se_math import se2, se2_mul, se2_inv, iota, interp_se2, interp_se3
 
 
 def detect_contact_frame(eef, nu, n_nu):
-    """A.2.1 phase-boundary heuristic: first frame of sustained gripper-object contact.
+    """Phase-boundary heuristic based on sustained end-effector translation.
 
     ``t*`` is the first frame whose end-effector world-translation speed exceeds the
     threshold ``nu`` for ``n_nu`` consecutive frames — a sustained burst rather than a
@@ -48,7 +45,7 @@ def detect_contact_frame(eef, nu, n_nu):
 
 
 def sample_se2_perturbation(r, phi, rng):
-    """Eq. 2: planar translation uniform on a disk of radius ``r``, yaw in ``[-phi, phi]``."""
+    """Planar sampling: planar translation uniform on a disk of radius ``r``, yaw in ``[-phi, phi]``."""
     radius = r * np.sqrt(rng.uniform())     # sqrt → uniform over disk area, not radius
     angle = rng.uniform(0.0, 2.0 * np.pi)
     dyaw = rng.uniform(-phi, phi)
@@ -61,7 +58,7 @@ def eef_in_base(base_pose, eef_pose):
 
 
 def augment_trajectory(base, eef, grip, t_star, dT1, dT_star):
-    """Apply Eq. 2-3 with sampled endpoint perturbations ``dT1`` (approach start) and
+    """Apply the trajectory augmentation rule with sampled endpoint perturbations ``dT1`` (approach start) and
     ``dT_star`` (contact frame). Returns the augmented poses and the per-frame
     body-local perturbations consumed by the renderer."""
     H = len(base)
@@ -72,7 +69,7 @@ def augment_trajectory(base, eef, grip, t_star, dT1, dT_star):
     for t in range(H):
         if t <= t_star:
             # Approach phase: base freely perturbed, blending dT1 -> dT_star along the
-            # SE(2) geodesic (A.2.2: split interpolant ~ geodesic to first order).
+            # SE(2) geodesic (the trajectory interpolation specification: split interpolant ~ geodesic to first order).
             lam = t / t_star if t_star > 0 else 1.0
             dpert_base[t] = interp_se2(dT1, dT_star, lam)
         else:
@@ -95,7 +92,7 @@ def augment_trajectory(base, eef, grip, t_star, dT1, dT_star):
 
     # Consistency: T^{g/b} re-expressed against the perturbed base.
     aug_gb = np.stack([eef_in_base(aug_base[t], aug_eef[t]) for t in range(H)])
-    # Gripper-frame perturbation consumed by Eq. 6: dT^g = (T^g)^{-1} . T_hat^g
+    # Gripper-frame perturbation consumed by Camera-pose update: dT^g = (T^g)^{-1} . T_hat^g
     # (identity through the contact phase, where the end-effector world pose is fixed).
     dpert_eef = np.stack([np.linalg.inv(eef[t]) @ aug_eef[t] for t in range(H)])
 
@@ -120,7 +117,7 @@ def derive_actions(aug_base, aug_eef):
 
 
 def augment_camera_pose(cam_world, cam_offset, body_pert):
-    """Eq. 6: re-render pose for a camera rigidly attached to a perturbed body.
+    """Camera-pose update: re-render pose for a camera rigidly attached to a perturbed body.
 
     ``cam_world`` is the source camera pose, ``cam_offset = T^{k/m}`` is the constant
     camera-to-body offset (estimated once at t=1), and ``body_pert`` is the body-local
@@ -158,7 +155,7 @@ def run(source, num_aug, r, phi, epsilon, nu, n_nu, seed, out_dir):
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="NoDA trajectory generator (base perturbation)")
+    p = argparse.ArgumentParser(description="DemoPlug trajectory generator (base perturbation)")
     p.add_argument("--source", required=True,
                    help="npz with base_se2 (H,3), eef_se3 (H,4,4), gripper (H,)")
     p.add_argument("--num-aug", type=int, default=4, help="augmented demos per source (N)")
